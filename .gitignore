@@ -1,4 +1,13 @@
-.logs/
+# Ambientes virtuais e arquivos de sistema
+.conda/
 venv/
 __pycache__/
 .DS_Store
+.logs/
+
+# Arquivos sensíveis
+.env
+
+# Arquivos pesados e outputs
+*.mp4
+*.wav
