@@ -1,78 +1,147 @@
-import time
+#!/usr/bin/env python3
 import os
 import tempfile
-import zipfile
 import platform
 import subprocess
-from moviepy.editor import (AudioFileClip, CompositeVideoClip, CompositeAudioClip, ImageClip,
-                            TextClip, VideoFileClip)
-from moviepy.audio.fx.audio_loop import audio_loop
-from moviepy.audio.fx.audio_normalize import audio_normalize
 import requests
+from PIL import Image as PilImage
+# Monkey-patch ANTIALIAS para Pillow ≥10
+if not hasattr(PilImage, 'ANTIALIAS'):
+    PilImage.ANTIALIAS = PilImage.Resampling.LANCZOS
 
-def download_file(url, filename):
+from moviepy.editor import (
+    AudioFileClip,
+    CompositeVideoClip,
+    CompositeAudioClip,
+    ColorClip,
+    TextClip,
+    VideoFileClip
+)
+from moviepy import video as mpy_video
+from moviepy.video.fx.all import loop
+
+# Resolução alvo 16:9
+TARGET_WIDTH, TARGET_HEIGHT = 1920, 1080
+# Configurações de legenda
+FONT_SIZE = 48
+CAPTION_WIDTH = int(TARGET_WIDTH * 0.8)  # largura máxima para wrap
+
+
+def download_file(url: str, filename: str) -> None:
+    """Baixa o arquivo da URL para o caminho local."""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    resp = requests.get(url, headers=headers, timeout=30)
+    resp.raise_for_status()
     with open(filename, 'wb') as f:
-        headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
-        response = requests.get(url, headers=headers)
-        f.write(response.content)
+        f.write(resp.content)
 
-def search_program(program_name):
-    try: 
-        search_cmd = "where" if platform.system() == "Windows" else "which"
-        return subprocess.check_output([search_cmd, program_name]).decode().strip()
-    except subprocess.CalledProcessError:
+
+def find_imagemagick() -> str:
+    """Procura o binário do ImageMagick no sistema."""
+    cmd = "where" if platform.system() == "Windows" else "which"
+    try:
+        return subprocess.check_output([cmd, 'magick']).decode().strip()
+    except Exception:
         return None
 
-def get_program_path(program_name):
-    program_path = search_program(program_name)
-    return program_path
 
-def get_output_media(audio_file_path, timed_captions, background_video_data, video_server):
-    OUTPUT_FILE_NAME = "rendered_video.mp4"
-    magick_path = get_program_path("magick")
-    print(magick_path)
-    if magick_path:
-        os.environ['IMAGEMAGICK_BINARY'] = magick_path
-    else:
-        os.environ['IMAGEMAGICK_BINARY'] = '/usr/bin/convert'
-    
+def get_output_media(
+    audio_file_path: str,
+    timed_captions: list,
+    background_video_data: list,
+    video_server: str
+) -> str:
+    """
+    Gera e exporta o vídeo final com background, legendas e áudio.
+    """
+    # Configura ImageMagick para TextClip
+    im_path = find_imagemagick()
+    if im_path:
+        os.environ['IMAGEMAGICK_BINARY'] = im_path
+
+    temp_files = []
     visual_clips = []
-    for (t1, t2), video_url in background_video_data:
-        # Download the video file
-        video_filename = tempfile.NamedTemporaryFile(delete=False).name
-        download_file(video_url, video_filename)
-        
-        # Create VideoFileClip from the downloaded file
-        video_clip = VideoFileClip(video_filename)
-        video_clip = video_clip.set_start(t1)
-        video_clip = video_clip.set_end(t2)
-        visual_clips.append(video_clip)
-    
-    audio_clips = []
-    audio_file_clip = AudioFileClip(audio_file_path)
-    audio_clips.append(audio_file_clip)
 
-    for (t1, t2), text in timed_captions:
-        text_clip = TextClip(txt=text, fontsize=100, color="white", stroke_width=3, stroke_color="black", method="label")
-        text_clip = text_clip.set_start(t1)
-        text_clip = text_clip.set_end(t2)
-        text_clip = text_clip.set_position(["center", 800])
+    # 1) Processa clipes de fundo
+    for (t1, t2), video_url in background_video_data:
+        segment_dur = t2 - t1
+        bg = None
+
+        if video_url:
+            try:
+                # Abre vídeo local ou remoto
+                if os.path.isfile(video_url):
+                    raw = VideoFileClip(video_url)
+                else:
+                    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
+                    download_file(video_url, tmp_file)
+                    raw = VideoFileClip(tmp_file)
+                    temp_files.append(tmp_file)
+                # Cria clipe de duração exata (loop se necessário)
+                if raw.duration >= segment_dur:
+                    bg = raw.subclip(0, segment_dur)
+                else:
+                    bg = raw.subclip(0, raw.duration).fx(loop, duration=segment_dur)
+            except Exception as e:
+                print(f"⚠️ Falha ao abrir clipe '{video_url}': {e}")
+                bg = None
+        # fallback: clipe preto
+        if bg is None:
+            bg = ColorClip((TARGET_WIDTH, TARGET_HEIGHT), color=(0, 0, 0), duration=segment_dur)
+
+        # posiciona e redimensiona
+        bg = bg.set_start(t1)
+        bg = bg.resize(height=TARGET_HEIGHT)
+        if bg.w < TARGET_WIDTH:
+            bg = bg.fx(
+                mpy_video.crop,
+                width=TARGET_WIDTH,
+                height=TARGET_HEIGHT,
+                x_center=bg.w / 2,
+                y_center=bg.h / 2
+            )
+        bg = bg.resize((TARGET_WIDTH, TARGET_HEIGHT))
+        visual_clips.append(bg)
+
+    # 2) Processa legendas
+    for (t1, t2), txt in timed_captions:
+        safe_txt = txt.replace('“', '"').replace('”', '"').replace('’', "'").replace('–', '-')
+        text_clip = TextClip(
+            safe_txt,
+            font='Helvetica-Bold',
+            fontsize=FONT_SIZE,
+            color="white",
+            stroke_width=2,
+            stroke_color="black",
+            method="caption",
+            size=(CAPTION_WIDTH, None),
+            align="center"
+        ).set_start(t1).set_end(t2)
+        text_clip = text_clip.set_position(("center", TARGET_HEIGHT - FONT_SIZE * 2))
         visual_clips.append(text_clip)
 
-    video = CompositeVideoClip(visual_clips)
-    
-    if audio_clips:
-        audio = CompositeAudioClip(audio_clips)
-        video.duration = audio.duration
-        video.audio = audio
+    # 3) Composição final
+    final = CompositeVideoClip(visual_clips, size=(TARGET_WIDTH, TARGET_HEIGHT))
 
-    video.write_videofile(OUTPUT_FILE_NAME, codec='libx264', audio_codec='aac', fps=25, preset='veryfast')
-    
-    # Clean up downloaded files
-    for (t1, t2), video_url in background_video_data:
-        video_filename = tempfile.NamedTemporaryFile(delete=False).name
-        os.remove(video_filename)
+    # 4) Adiciona áudio
+    audio = CompositeAudioClip([AudioFileClip(audio_file_path)])
+    final = final.set_audio(audio).set_duration(audio.duration)
 
-    return OUTPUT_FILE_NAME
+    # 5) Exporta
+    output = "rendered_video.mp4"
+    final.write_videofile(
+        output,
+        codec='libx264',
+        audio_codec='aac',
+        fps=25,
+        preset='veryfast'
+    )
+
+    # 6) Limpeza de arquivos temporários
+    for fpath in temp_files:
+        try:
+            os.remove(fpath)
+        except OSError:
+            pass
+
+    return output

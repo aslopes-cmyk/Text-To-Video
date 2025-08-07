@@ -1,93 +1,142 @@
-from openai import OpenAI
+#!/usr/bin/env python3
 import os
 import json
 import re
+import math
 from datetime import datetime
-from utility.utils import log_response,LOG_TYPE_GPT
+from textwrap import dedent
+from dotenv import load_dotenv
+from openai import OpenAI
+from utility.utils import log_response, LOG_TYPE_GPT
 
-if len(os.environ.get("GROQ_API_KEY")) > 30:
+# Carrega variáveis de ambiente de .env
+load_dotenv()
+
+# Configuração de parâmetros de duração
+total_duration = 60      # duração alvo em segundos
+min_segment = 4           # duração mínima de cada bloco (s)
+max_segment = 6           # duração máxima de cada bloco (s)
+est_segments = int(total_duration / ((min_segment + max_segment) / 2))
+intro_duration = 6
+outro_duration = 6
+central_duration = total_duration - intro_duration - outro_duration
+
+# Inicializa cliente de LLM
+groq_key = os.environ.get("GROQ_API_KEY", "")
+if len(groq_key) > 30:
     from groq import Groq
     model = "llama3-70b-8192"
-    client = Groq(
-        api_key=os.environ.get("GROQ_API_KEY"),
-        )
+    client = Groq(api_key=groq_key)
 else:
     model = "gpt-4o"
-    OPENAI_API_KEY = os.environ.get('OPENAI_KEY')
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    openai_key = os.getenv('OPENAI_API_KEY')
+    if not openai_key:
+        raise ValueError('A variável OPENAI_API_KEY não está definida para vídeo_search_query_generator.')
+    client = OpenAI(api_key=openai_key)
+
+# Monta prompt dinamicamente
+prompt = dedent(f"""# 
+                
+Instruções para gerar queries de busca de vídeo
+
+Você tem um roteiro jornalístico (vídeo de ~{total_duration}s) dividido em segmentos de {min_segment}–{max_segment}s.
+Para cada segmento, há início (`start`), fim (`end`) e um breve texto narrado (`trecho`).
+
+**Objetivo**: criar **três** strings de busca em **português**, **visualmente concretas**, que tragam cenas diretamente relacionadas ao conteúdo do segmento:
+- Use **substantivos** e **adjetivos** que descrevam o objeto ou ação principal (ex.: “vista do Morro do Moreno, Vila Velha” em vez de “vista de montanha”).
+- Adicione **cenário** ou **contexto** se ajudar (ex.: “biblloteca antiga cheia de livros”).
+- Evite termos genéricos ou abstratos (não use “momento feliz”; use “criança sorrindo”, “rua ensolarada”).
+- Cada query deve ser de 1 a 10 palavras.
+
+**Formato de saída**: um array JSON com itens:
+```json
+[
+{{"start": "00:00", "end": "00:04", "keywords": ["gato cheirando flor em uma mesa", "páginas de um livro antigo", "escritório vintage"]}},
+…
+]
+```
+
++**Importante**: as queries precisam ser diretas, curtas e em inglês.
++\"\"\")
+""")
 
 log_directory = ".logs/gpt_logs"
 
-prompt = """# Instructions
-
-Given the following video script and timed captions, extract three visually concrete and specific keywords for each time segment that can be used to search for background videos. The keywords should be short and capture the main essence of the sentence. They can be synonyms or related terms. If a caption is vague or general, consider the next timed caption for more context. If a keyword is a single word, try to return a two-word keyword that is visually concrete. If a time frame contains two or more important pieces of information, divide it into shorter time frames with one keyword each. Ensure that the time periods are strictly consecutive and cover the entire length of the video. Each keyword should cover between 2-4 seconds. The output should be in JSON format, like this: [[[t1, t2], ["keyword1", "keyword2", "keyword3"]], [[t2, t3], ["keyword4", "keyword5", "keyword6"]], ...]. Please handle all edge cases, such as overlapping time segments, vague or general captions, and single-word keywords.
-
-For example, if the caption is 'The cheetah is the fastest land animal, capable of running at speeds up to 75 mph', the keywords should include 'cheetah running', 'fastest animal', and '75 mph'. Similarly, for 'The Great Wall of China is one of the most iconic landmarks in the world', the keywords should be 'Great Wall of China', 'iconic landmark', and 'China landmark'.
-
-Important Guidelines:
-
-Use only English in your text queries.
-Each search string must depict something visual.
-The depictions have to be extremely visually concrete, like rainy street, or cat sleeping.
-'emotional moment' <= BAD, because it doesn't depict something visually.
-'crying child' <= GOOD, because it depicts something visual.
-The list must always contain the most relevant and appropriate query searches.
-['Car', 'Car driving', 'Car racing', 'Car parked'] <= BAD, because it's 4 strings.
-['Fast car'] <= GOOD, because it's 1 string.
-['Un chien', 'une voiture rapide', 'une maison rouge'] <= BAD, because the text query is NOT in English.
-
-Note: Your response should be the response only and no extra text or data.
-  """
-
-def fix_json(json_str):
-    # Replace typographical apostrophes with straight quotes
+def fix_json(json_str: str) -> str:
     json_str = json_str.replace("’", "'")
-    # Replace any incorrect quotes (e.g., mixed single and double quotes)
-    json_str = json_str.replace("“", "\"").replace("”", "\"").replace("‘", "\"").replace("’", "\"")
-    # Add escaping for quotes within the strings
+    json_str = json_str.replace("“", '"').replace("”", '"').replace("‘", '"').replace("’", '"')
     json_str = json_str.replace('"you didn"t"', '"you didn\'t"')
     return json_str
 
-def getVideoSearchQueriesTimed(script,captions_timed):
-    end = captions_timed[-1][0][1]
-    try:
-        
-        out = [[[0,0],""]]
-        while out[-1][0][1] != end:
-            content = call_OpenAI(script,captions_timed).replace("'",'"')
-            try:
-                out = json.loads(content)
-            except Exception as e:
-                print("content: \n", content, "\n\n")
-                print(e)
-                content = fix_json(content.replace("```json", "").replace("```", ""))
-                out = json.loads(content)
-        return out
-    except Exception as e:
-        print("error in response",e)
-   
-    return None
 
-def call_OpenAI(script,captions_timed):
-    user_content = """Script: {}
-Timed Captions:{}
-""".format(script,"".join(map(str,captions_timed)))
-    print("Content", user_content)
-    
+def to_seconds(time_val):
+    # Converte formatos "mm:ss" ou valor numérico para segundos (float)
+    if isinstance(time_val, (int, float)):
+        return float(time_val)
+    if isinstance(time_val, str) and ':' in time_val:
+        m, s = time_val.split(':')
+        return int(m) * 60 + float(s)
+    try:
+        return float(time_val)
+    except:
+        return 0.0
+
+
+def normalize_segments(segments):
+    normalized = []
+    for (start, end), kws in segments:
+        dur = end - start
+        if dur > max_segment:
+            num = math.ceil(dur / max_segment)
+            step = dur / num
+            for i in range(num):
+                s = start + i * step
+                e = min(end, start + (i + 1) * step)
+                normalized.append(((round(s, 2), round(e, 2)), kws))
+        else:
+            normalized.append(((start, end), kws))
+    return normalized
+
+
+def getVideoSearchQueriesTimed(script, captions_timed):
+    end_time = captions_timed[-1][0][1]
+    # 1) chama uma única vez
+    content = call_OpenAI(script, captions_timed)
+    try:
+        raw = json.loads(content)
+    except json.JSONDecodeError:
+        cleaned = content.replace("```json", "").replace("```", "")
+        raw = json.loads(fix_json(cleaned))
+
+    # 2) converte dicionários em [[start,end], keywords]
+    out = []
+    for item in raw:
+        s = to_seconds(item.get('start', 0))
+        e = to_seconds(item.get('end',   0))
+        kws = item.get('keywords', [])
+        out.append([[s, e], kws])
+
+    # 3) normaliza segmentos maiores/menores que o esperado
+    out = normalize_segments(out)
+    print(f"Gerados {len(out)} segmentos para {end_time}s (meta: {est_segments})")
+    return out
+
+
+def call_OpenAI(script, captions_timed):
+    user_content = f"Script: {script}\nTimed Captions: {captions_timed}"
     response = client.chat.completions.create(
-        model= model,
-        temperature=1,
+        model=model,
+        temperature=0.7,
         messages=[
             {"role": "system", "content": prompt},
             {"role": "user", "content": user_content}
         ]
     )
-    
     text = response.choices[0].message.content.strip()
-    text = re.sub('\s+', ' ', text)
-    print("Text", text)
-    log_response(LOG_TYPE_GPT,script,text)
+    text = re.sub(r'\s+', ' ', text)
+    log_response(LOG_TYPE_GPT, script, text)
     return text
+
 
 def merge_empty_intervals(segments):
     merged = []
@@ -95,12 +144,9 @@ def merge_empty_intervals(segments):
     while i < len(segments):
         interval, url = segments[i]
         if url is None:
-            # Find consecutive None intervals
             j = i + 1
             while j < len(segments) and segments[j][1] is None:
                 j += 1
-            
-            # Merge consecutive None intervals with the previous valid URL
             if i > 0:
                 prev_interval, prev_url = merged[-1]
                 if prev_url is not None and prev_interval[1] == interval[0]:
@@ -109,10 +155,8 @@ def merge_empty_intervals(segments):
                     merged.append([interval, prev_url])
             else:
                 merged.append([interval, None])
-            
             i = j
         else:
             merged.append([interval, url])
             i += 1
-    
     return merged
