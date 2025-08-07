@@ -1,4 +1,11 @@
-.logs/
-venv/
+# Arquivos sensíveis
+.env
+
+# Arquivos de mídia e pesados
+*.mp4
+*.wav
+
+# Outros arquivos comuns para projetos Python
 __pycache__/
-.DS_Store
+*.pyc
+.logs

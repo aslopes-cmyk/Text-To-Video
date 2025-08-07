@@ -4,6 +4,7 @@ import json
 import re
 import math
 from datetime import datetime
+from textwrap import dedent
 from dotenv import load_dotenv
 from openai import OpenAI
 from utility.utils import log_response, LOG_TYPE_GPT
@@ -34,44 +35,30 @@ else:
     client = OpenAI(api_key=openai_key)
 
 # Monta prompt dinamicamente
-prompt = f"""# Instruções
+prompt = dedent(f"""# 
+                
+Instruções para gerar queries de busca de vídeo
 
-Dado o seguinte material de origem — seja um texto, um arquivo ou uma URL — analise-o e gere um roteiro de vídeo em Português do Brasil, destinado a fins jornalísticos. O roteiro deve obedecer a estas regras:
+Você tem um roteiro jornalístico (vídeo de ~{total_duration}s) dividido em segmentos de {min_segment}–{max_segment}s.
+Para cada segmento, há início (`start`), fim (`end`) e um breve texto narrado (`trecho`).
 
-Estruture segmentos de tempo consecutivos, cobrindo toda a duração do vídeo, com duração aproximada de {min_segment} a {max_segment} segundos cada.
+**Objetivo**: criar **três** strings de busca em **português**, **visualmente concretas**, que tragam cenas diretamente relacionadas ao conteúdo do segmento:
+- Use **substantivos** e **adjetivos** que descrevam o objeto ou ação principal (ex.: “vista do Morro do Moreno, Vila Velha” em vez de “vista de montanha”).
+- Adicione **cenário** ou **contexto** se ajudar (ex.: “biblloteca antiga cheia de livros”).
+- Evite termos genéricos ou abstratos (não use “momento feliz”; use “criança sorrindo”, “rua ensolarada”).
+- Cada query deve ser de 1 a 10 palavras.
 
-Para cada segmento, apresente:
-
-start: tempo inicial (em segundos ou no formato “mm:ss”).
-end: tempo final (em segundos ou no formato “mm:ss”).
-trecho: texto do roteiro que será narrado, claro e objetivo.
-keywords: três palavras ou expressões curtas, em Português, visualmente concretas, que possam ser usadas para buscar imagens ou vídeos de fundo.
-
-Inclua:
-1. Introdução (00:00–00:{intro_duration:02d}): apresentação do tema.
-2. {est_segments - 2} segmentos centrais (~{central_duration // ((min_segment + max_segment)//2)} segmentos) cada um de {min_segment}-{max_segment}s com informações específicas.
-3. Conclusão (últimos {outro_duration}s): recapitulação jornalística e chamada à ação.
-
-A saída deve ser apenas um array JSON no formato:
-
+**Formato de saída**: um array JSON com itens:
+```json
 [
-  {{
-    "start": "00:00",
-    "end": "00:04",
-    "trecho": "Texto do roteiro para este intervalo de tempo.",
-    "keywords": ["palavra-chave1", "palavra-chave2", "palavra-chave3"]
-  }},
-  …
+{{"start": "00:00", "end": "00:04", "keywords": ["gato cheirando flor em uma mesa", "páginas de um livro antigo", "escritório vintage"]}},
+…
 ]
+```
 
-Exemplo de keywords
-Legenda: “O guepardo é o animal terrestre mais rápido, alcançando até 120 km/h.”
-Keywords: ["guepardo correndo", "animal veloz", "120 km/h"]
-
-Observação:
-Este roteiro será usado em produção jornalística; seja o mais preciso possível.
-Total de duração alvo: {total_duration}s, segmentos de {min_segment}-{max_segment}s, total aproximado de {est_segments} segmentos.
-"""
++**Importante**: as queries precisam ser diretas, curtas e em inglês.
++\"\"\")
+""")
 
 log_directory = ".logs/gpt_logs"
 
@@ -113,40 +100,26 @@ def normalize_segments(segments):
 
 def getVideoSearchQueriesTimed(script, captions_timed):
     end_time = captions_timed[-1][0][1]
-    out = []
+    # 1) chama uma única vez
+    content = call_OpenAI(script, captions_timed)
     try:
-        while True:
-            content = call_OpenAI(script, captions_timed)
-            # tenta carregar JSON
-            try:
-                raw = json.loads(content)
-            except json.JSONDecodeError:
-                cleaned = content.replace("```json", "").replace("```", "")
-                cleaned = fix_json(cleaned)
-                raw = json.loads(cleaned)
-            # converte dicts para o formato interno
-            if raw and isinstance(raw[0], dict):
-                converted = []
-                for item in raw:
-                    try:
-                        start = to_seconds(item['start'])
-                        end = to_seconds(item['end'])
-                        kws = item.get('keywords', [])
-                        converted.append([[start, end], kws])
-                    except KeyError:
-                        continue
-                out = converted
-            else:
-                out = raw
-            # verifica término
-            if out and to_seconds(out[-1][0][1]) == end_time:
-                break
-        out = normalize_segments(out)
-        print(f"Gerados {len(out)} segmentos para {end_time}s (meta: {est_segments})")
-        return out
-    except Exception as e:
-        print("Erro ao gerar queries de vídeo: ", repr(e))
-        raise
+        raw = json.loads(content)
+    except json.JSONDecodeError:
+        cleaned = content.replace("```json", "").replace("```", "")
+        raw = json.loads(fix_json(cleaned))
+
+    # 2) converte dicionários em [[start,end], keywords]
+    out = []
+    for item in raw:
+        s = to_seconds(item.get('start', 0))
+        e = to_seconds(item.get('end',   0))
+        kws = item.get('keywords', [])
+        out.append([[s, e], kws])
+
+    # 3) normaliza segmentos maiores/menores que o esperado
+    out = normalize_segments(out)
+    print(f"Gerados {len(out)} segmentos para {end_time}s (meta: {est_segments})")
+    return out
 
 
 def call_OpenAI(script, captions_timed):

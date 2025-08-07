@@ -1,0 +1,18 @@
+{
+  "convento da penha": {
+    "paths": ["/Users/aslopes/Documents/videoai/videos/convento-da-penha-em-360-837852.mp4"],
+    "tags": ["convento da penha", "Vila Velha"],
+    "description": "Vista aérea do Convento da Penha, monumento histórico de Vila Velha, no ES"
+  },
+  "romaria": {
+    "paths": ["/Users/aslopes/Documents/videoai/videos/romaria-dos-homens-imagem-de-nossa-senhora--das-alegrias-chega-ao-altar-na-prainha--751278.mp4"],
+    "tags": ["festa da penha", "romaria", "romaria dos homens"],
+    "description": "Cenas da Romaria dos Homens, parte da Festa da Penha, com a imagem de Nossa Senhora das Alegrias chegando ao altar na Prainha"
+  },
+  "festa da penha": {
+    "paths": ["/Users/aslopes/Documents/videoai/videos/video-de-lancamento-da-festa-da-penha-2022-658786.mp4", "/Users/aslopes/Documents/videoai/videos/festa-da-penha-a-beleza-do-convento-que-o-coronavirus-nao-vai-ofuscar-232046.mp4"],
+    "tags": ["festa da penha", "romaria", "romaria dos homens"],
+    "description": "Cenas variadas da Festa da Penha, incluindo o vídeo de lançamento de 2022 e a beleza do Convento"
+  }
+    
+}
