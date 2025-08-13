@@ -11,7 +11,7 @@ def extract_text_from_url(url: str) -> str:
         
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Tenta encontrar o conteúdo principal (isto pode precisar de ajuste por site)
+        # Tenta encontrar o conteúdo principal (necessita refinamnento)
         article_body = soup.find('article') or soup.find('main')
         if not article_body:
             print("⚠️ Tag <article> ou <main> não encontrada. Extraindo todo o texto da página.")

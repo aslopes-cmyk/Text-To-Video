@@ -15,7 +15,7 @@ async def generate_audio(
     """
     # Seleciona voz padrão de ENV ou fixa
     if voice is None:
-        voice = os.getenv('TTS_VOICE', 'pt-BR-AntonioNeural')
+        voice = os.getenv('TTS_VOICE', 'pt-BR-FranciscaNeural')
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(output_filename)
 

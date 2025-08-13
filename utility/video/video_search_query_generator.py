@@ -10,7 +10,7 @@ from utility.utils import log_response, LOG_TYPE_GPT, LOG_TYPE_STORYBOARD
 # Carrega variáveis de ambiente
 load_dotenv()
 
-# Inicializa cliente de LLM (Groq ou OpenAI)
+# Inicializa cliente de LLM 
 groq_key = os.environ.get("GROQ_API_KEY", "")
 if len(groq_key) > 30:
     from groq import Groq
@@ -23,7 +23,7 @@ else:
         raise ValueError('A chave da API da OpenAI não foi definida.')
     client = OpenAI(api_key=openai_key)
 
-# Prompt base, com instruções de prioridade refinadas
+# Prompt base para busca de vídeos
 prompt_base = dedent("""
 # Instruções para Gerar um Plano Visual (Storyboard)
 
@@ -80,7 +80,7 @@ def generate_visual_plan(script: str, captions_timed: list, video_source: str, u
     log_response(LOG_TYPE_GPT, script, content)
 
     try:
-        # --- LÓGICA DE EXTRAÇÃO DO JSON CORRIGIDA E MAIS ROBUSTA ---
+        # --- JSON EXTRACT ---
         data = json.loads(content)
         visual_plan_list = []
 

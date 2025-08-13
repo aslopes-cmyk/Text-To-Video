@@ -13,7 +13,7 @@ from utility.render.render_engine import get_output_media
 from utility.scraper.scraper import extract_text_from_url
 from utility.utils import slugify
 
-# NOVO: Define o nome da pasta de saída
+# Define o nome da pasta de saída
 OUTPUT_DIR = "output"
 
 def main():
@@ -41,7 +41,7 @@ def main():
     if not args.topic and not args.url:
         parser.error("Você deve fornecer um 'topic' ou uma '--url'.")
 
-    # NOVO: Garante que o diretório de saída exista
+    # Garante que o diretório de saída exista
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # --- LÓGICA PRINCIPAL BASEADA NO MODO ---
@@ -52,7 +52,7 @@ def main():
         base_name = slugify(args.topic)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{base_name}_{timestamp}.mp4"
-        # MODIFICADO: Cria o caminho completo do arquivo de saída
+        # Cria o caminho completo do arquivo de saída
         output_filepath = os.path.join(OUTPUT_DIR, filename)
         print(f"[INFO] Nome do arquivo de saída será: {output_filepath}")
         
@@ -71,7 +71,7 @@ def main():
         )
         
         print("\n[4/4] Renderizando vídeo final...")
-        # MODIFICADO: Passa o caminho completo para a função de renderização
+        # Passa o caminho completo para a função de renderização
         output_file_path = get_output_media(visual_plan_com_midia, output_filepath)
         print(f"\n✅ Vídeo de slideshow gerado com sucesso em: {output_file_path}")
 
@@ -94,7 +94,7 @@ def main():
         base_name = slugify(script[:60])
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{base_name}_{timestamp}.mp4"
-        # MODIFICADO: Cria o caminho completo do arquivo de saída
+        # Cria o caminho completo do arquivo de saída
         output_filepath = os.path.join(OUTPUT_DIR, filename)
         print(f"[INFO] Nome do arquivo de saída será: {output_filepath}")
         
@@ -117,7 +117,7 @@ def main():
         )
         
         print(f"\n[6/6] Renderizando vídeo final para {output_filepath}...")
-        # MODIFICADO: Passa o caminho completo para a função de renderização
+        # Passa o caminho completo para a função de renderização
         output_file_path = get_output_media(visual_plan_com_midia, output_filepath, "audio_tts.wav", captions)
         print(f"\n✅ Vídeo gerado com sucesso em: {output_file_path}")
 

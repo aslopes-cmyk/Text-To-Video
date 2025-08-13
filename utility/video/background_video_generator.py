@@ -124,7 +124,7 @@ def fetch_media_for_plan(
     
     user_keyword_list = [k.strip() for k in user_keywords.split(',')] if user_keywords else []
     
-    # **NOVO:** Contador de página para as buscas
+    # Contador de página para as buscas
     page_counter = 1
 
     for scene in visual_plan:

@@ -31,7 +31,7 @@ LOGO_FILE_PATH = "assets/BASE LOGO HORIZONTAL.png"
 VINHETA_FILE_PATH = "assets/AGVinhetaAudio04.mp4"
 
 
-# --- Funções Auxiliares (sem alterações) ---
+# --- Funções Auxiliares ---
 def download_file(url: str, filename: str) -> bool:
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -146,18 +146,18 @@ def get_output_media(
     
     total_duration = main_content_duration + vinheta_clip.duration
 
-    # --- BLOCO DE CÓDIGO CORRIGIDO PARA A LOGOMARCA ---
+    # --- LOGOMARCA ---
     print("  - Adicionando logomarca...")
     logo_clip = (ImageClip(LOGO_FILE_PATH)
                  .set_duration(total_duration)
                  .resize(height=int(TARGET_HEIGHT * 0.50)) # Reduzido para 8% da altura
                  .set_opacity(0.9))
 
-    # **CORREÇÃO DEFINITIVA:** Define a posição com coordenadas calculadas para criar a margem.
+    # Coordenadas logomarca
     margin = 25 # Margem de 25 pixels da borda
     logo_position = (TARGET_WIDTH - logo_clip.w - margin, margin)
     logo_clip = logo_clip.set_position(logo_position)
-    # --- FIM DO BLOCO CORRIGIDO ---
+    
 
     final_audio = None
     audio_clips = []

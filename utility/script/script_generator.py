@@ -21,7 +21,8 @@ try:
     with open(template_path, 'r', encoding='utf-8') as f:
         prompt_template = f.read()
 except FileNotFoundError:
-    # **BLOCO ATUALIZADO COM O NOVO PROMPT DETALHADO**
+    
+    # Prompt para geracao do script 
     prompt_template = (
         "Você é um redator experiente para vídeos jornalísticos em formato horizontal 16:9, "
         "especializado em conteúdos explicativos para o portal de notícias A Gazeta.\n\n"
@@ -42,8 +43,7 @@ except FileNotFoundError:
         "{\"script\":\"Aqui vai o roteiro completo do vídeo...\"}"
     )
 
-# **LÓGICA DE FORMATAÇÃO AJUSTADA**
-# Como o novo prompt já é completo, apenas atribuímos o valor.
+
 template = prompt_template
 
 # Inicialização do cliente LLM
