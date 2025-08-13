@@ -13,7 +13,6 @@ from utility.render.render_engine import get_output_media
 from utility.scraper.scraper import extract_text_from_url
 from utility.utils import slugify
 
-# Define o nome da pasta de saída
 OUTPUT_DIR = "output"
 
 def main():
@@ -22,7 +21,7 @@ def main():
     parser.add_argument("topic", nargs='?', type=str, help="Tópico para o vídeo.")
     parser.add_argument(
         "--mode", type=str, default="video", choices=['video', 'slideshow'],
-        help="Modo de operação: 'video' (completo com narração) ou 'slideshow' (apenas imagens e texto)."
+        help="Modo de operação: 'video' (completo) ou 'slideshow' (visual)."
     )
     parser.add_argument("-u", "--url", type=str, help="URL de uma reportagem para usar como base.")
     parser.add_argument("-k", "--keywords", type=str, help="Palavras-chave para guiar a busca de mídia.")
@@ -30,29 +29,43 @@ def main():
         "--strict-keywords", action='store_true',
         help="Força a busca de mídia a usar apenas as keywords fornecidas via -k."
     )
-    parser.add_argument("--tts-voice", type=str, default=os.getenv('TTS_VOICE', 'pt-BR-AntonioNeural'), help="Voz TTS.")
+    # NOVOS ARGUMENTOS PARA CONTROLE DE VOZ
+    parser.add_argument(
+        "--tts-provider", type=str, default="edge", choices=['edge', 'elevenlabs'],
+        help="Provedor de Text-to-Speech a ser usado."
+    )
+    parser.add_argument(
+        "--voice", type=str,
+        help="Voz a ser usada. Para 'edge', nome (ex: pt-BR-AntonioNeural). Para 'elevenlabs', a Voice ID."
+    )
     parser.add_argument("--video-source", type=str, default=os.getenv('VIDEO_SOURCE', 'pexels'), choices=['pexels', 'pixabay', 'jwplayer', 'local'], help="Fonte da mídia.")
     parser.add_argument(
         "--slide-duration", type=int, default=7,
-        help="Duração em segundos de cada slide no modo slideshow."
+        help="Duração de cada slide no modo slideshow."
     )
     args = parser.parse_args()
 
     if not args.topic and not args.url:
         parser.error("Você deve fornecer um 'topic' ou uma '--url'.")
 
-    # Garante que o diretório de saída exista
+    # Define a voz padrão se não for especificada pelo usuário
+    if not args.voice:
+        if args.tts_provider == 'elevenlabs':
+            # Use uma Voice ID padrão da sua conta ou uma que você goste
+            args.voice = os.getenv('ELEVENLABS_VOICE_ID', 'JBFqnCBsd6RMkjVDRZzb') 
+        else:
+            args.voice = os.getenv('EDGE_TTS_VOICE', 'pt-BR-AntonioNeural')
+
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # --- LÓGICA PRINCIPAL BASEADA NO MODO ---
     
     if args.mode == 'slideshow':
+        # ... (fluxo do slideshow continua o mesmo)
         print("🚀 Iniciando modo SLIDESHOW...")
-        
         base_name = slugify(args.topic)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{base_name}_{timestamp}.mp4"
-        # Cria o caminho completo do arquivo de saída
         output_filepath = os.path.join(OUTPUT_DIR, filename)
         print(f"[INFO] Nome do arquivo de saída será: {output_filepath}")
         
@@ -71,22 +84,20 @@ def main():
         )
         
         print("\n[4/4] Renderizando vídeo final...")
-        # Passa o caminho completo para a função de renderização
         output_file_path = get_output_media(visual_plan_com_midia, output_filepath)
         print(f"\n✅ Vídeo de slideshow gerado com sucesso em: {output_file_path}")
 
     elif args.mode == 'video':
         print("🚀 Iniciando modo VÍDEO...")
-        
         script_input = ""
         if args.url:
-            print(f"[1/6] Extraindo conteúdo da URL: {args.url}")
+            print(f"[1/7] Extraindo conteúdo da URL: {args.url}")
             article_text = extract_text_from_url(args.url)
             if not article_text: return
             script_input = f"Crie um roteiro jornalístico para um vídeo curto baseado no seguinte artigo:\n\n---\n\n{article_text}"
         else:
             script_input = args.topic
-            print("[1/6] Gerando roteiro a partir do tópico...")
+            print("[1/7] Gerando roteiro a partir do tópico...")
         
         script = generate_script(script_input)
         print(f"    Roteiro gerado:\n{script}\n")
@@ -94,21 +105,26 @@ def main():
         base_name = slugify(script[:60])
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{base_name}_{timestamp}.mp4"
-        # Cria o caminho completo do arquivo de saída
         output_filepath = os.path.join(OUTPUT_DIR, filename)
         print(f"[INFO] Nome do arquivo de saída será: {output_filepath}")
         
-        print("[2/6] Gerando áudio TTS...")
-        asyncio.run(generate_audio(script, "audio_tts.wav", voice=args.tts_voice))
+        print(f"[2/7] Gerando áudio TTS usando '{args.tts_provider}'...")
+        # ATUALIZADO: Chamada da função de áudio agora passa os novos parâmetros
+        asyncio.run(generate_audio(
+            script, 
+            "audio_tts.wav", 
+            tts_provider=args.tts_provider,
+            voice=args.voice
+        ))
         
-        print("[3/6] Gerando legendas temporizadas...")
+        print("[3/7] Gerando legendas temporizadas...")
         captions = generate_timed_captions("audio_tts.wav")
         print(f"    {len(captions)} segmentos de legenda gerados.\n")
         
-        print("[4/6] Gerando plano visual (storyboard)...")
+        print("[4/7] Gerando plano visual (storyboard)...")
         visual_plan = generate_visual_plan(script, captions, args.video_source, args.keywords)
         
-        print("[5/6] Buscando mídias para o plano visual...")
+        print("[5/7] Buscando mídias para o plano visual...")
         visual_plan_com_midia = fetch_media_for_plan(
             visual_plan, 
             args.video_source,
@@ -116,8 +132,7 @@ def main():
             strict_mode=args.strict_keywords
         )
         
-        print(f"\n[6/6] Renderizando vídeo final para {output_filepath}...")
-        # Passa o caminho completo para a função de renderização
+        print(f"\n[6/7] Renderizando vídeo final para {output_filepath}...")
         output_file_path = get_output_media(visual_plan_com_midia, output_filepath, "audio_tts.wav", captions)
         print(f"\n✅ Vídeo gerado com sucesso em: {output_file_path}")
 
