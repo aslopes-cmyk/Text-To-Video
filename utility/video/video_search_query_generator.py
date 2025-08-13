@@ -2,26 +2,15 @@
 import os
 import json
 import re
-import math
-from datetime import datetime
 from textwrap import dedent
 from dotenv import load_dotenv
 from openai import OpenAI
-from utility.utils import log_response, LOG_TYPE_GPT
+from utility.utils import log_response, LOG_TYPE_GPT, LOG_TYPE_STORYBOARD
 
-# Carrega variáveis de ambiente de .env
+# Carrega variáveis de ambiente
 load_dotenv()
 
-# Configuração de parâmetros de duração
-total_duration = 60      # duração alvo em segundos
-min_segment = 4           # duração mínima de cada bloco (s)
-max_segment = 6           # duração máxima de cada bloco (s)
-est_segments = int(total_duration / ((min_segment + max_segment) / 2))
-intro_duration = 6
-outro_duration = 6
-central_duration = total_duration - intro_duration - outro_duration
-
-# Inicializa cliente de LLM
+# Inicializa cliente de LLM (Groq ou OpenAI)
 groq_key = os.environ.get("GROQ_API_KEY", "")
 if len(groq_key) > 30:
     from groq import Groq
@@ -31,132 +20,120 @@ else:
     model = "gpt-4o"
     openai_key = os.getenv('OPENAI_API_KEY')
     if not openai_key:
-        raise ValueError('A variável OPENAI_API_KEY não está definida para vídeo_search_query_generator.')
+        raise ValueError('A chave da API da OpenAI não foi definida.')
     client = OpenAI(api_key=openai_key)
 
-# Monta prompt dinamicamente
-prompt = dedent(f"""# 
-                
-Instruções para gerar queries de busca de vídeo
+# Prompt base, com instruções de prioridade refinadas
+prompt_base = dedent("""
+# Instruções para Gerar um Plano Visual (Storyboard)
 
-Você tem um roteiro jornalístico (vídeo de ~{total_duration}s) dividido em segmentos de {min_segment}–{max_segment}s.
-Para cada segmento, há início (`start`), fim (`end`) e um breve texto narrado (`trecho`).
+Você é um diretor de arte de IA. Seu objetivo é criar um plano visual para um vídeo a partir de um roteiro e legendas temporizadas.
 
-**Objetivo**: criar **três** strings de busca em **português**, **visualmente concretas**, que tragam cenas diretamente relacionadas ao conteúdo do segmento:
-- Use **substantivos** e **adjetivos** que descrevam o objeto ou ação principal (ex.: “vista do Morro do Moreno, Vila Velha” em vez de “vista de montanha”).
-- Adicione **cenário** ou **contexto** se ajudar (ex.: “biblloteca antiga cheia de livros”).
-- Evite termos genéricos ou abstratos (não use “momento feliz”; use “criança sorrindo”, “rua ensolarada”).
-- Cada query deve ser de 1 a 10 palavras.
+Para cada segmento do roteiro, decida o melhor formato visual seguindo estas prioridades:
+1.  `"video"`: **Use este tipo para a maior parte da narrativa.** Deve ser a sua escolha padrão para ilustrar o roteiro.
+2.  `"slide"`: **Use este tipo APENAS** para apresentar dados específicos, listas, nomes próprios, ou conceitos-chave que precisam de destaque visual com texto. Não use para narrativa geral.
+3.  `"title"`: **Use este tipo UMA VEZ** para a introdução do vídeo, se aplicável.
 
-**Formato de saída**: um array JSON com itens:
-```json
-[
-{{"start": "00:00", "end": "00:04", "keywords": ["gato cheirando flor em uma mesa", "páginas de um livro antigo", "escritório vintage"]}},
-…
-]
-```
-
-+**Importante**: as queries precisam ser diretas, curtas e em inglês.
-+\"\"\")
+**Formato de Saída Obrigatório**: um array JSON de "cenas". Cada cena DEVE ser um objeto com os seguintes campos:
+- `"start"`: Início do segmento em segundos (float).
+- `"end"`: Fim do segmento em segundos (float).
+- `"type"`: O tipo de cena (`"video"`, `"title"`, ou `"slide"`).
+- `"data"`: Um objeto contendo os dados para aquele tipo de cena:
+    - Para `"type": "video"`, a data deve ser: `{"keywords": ["query para vídeo de fundo"]}`
+    - Para `"type": "title"`, a data deve ser: `{"main_text": "TÍTULO PRINCIPAL E CHAMATIVO", "background_keywords": ["query para vídeo de fundo"]}`
+    - Para `"type": "slide"`, a data deve ser: `{"slide_text": "Texto do slide", "background_keywords": ["query para VÍDEO de fundo"]}`
 """)
 
-log_directory = ".logs/gpt_logs"
-
 def fix_json(json_str: str) -> str:
-    json_str = json_str.replace("’", "'")
-    json_str = json_str.replace("“", '"').replace("”", '"').replace("‘", '"').replace("’", '"')
-    json_str = json_str.replace('"you didn"t"', '"you didn\'t"')
-    return json_str
+    """Função auxiliar para corrigir erros comuns em JSONs gerados por LLMs."""
+    return json_str.replace("’", "'").replace("“", '"').replace("”", '"')
 
+def generate_visual_plan(script: str, captions_timed: list, video_source: str, user_keywords: str = None) -> list:
+    """
+    Gera um plano visual completo (storyboard) a partir do roteiro e legendas.
+    """
+    final_prompt = prompt_base
+    
+    if user_keywords:
+        user_guideline = f"**Diretriz de Conteúdo Fornecida pelo Usuário:** Dê preferência a visuais que se relacionem com estas palavras-chave: {user_keywords}.\n\n"
+        final_prompt = user_guideline + final_prompt
 
-def to_seconds(time_val):
-    # Converte formatos "mm:ss" ou valor numérico para segundos (float)
-    if isinstance(time_val, (int, float)):
-        return float(time_val)
-    if isinstance(time_val, str) and ':' in time_val:
-        m, s = time_val.split(':')
-        return int(m) * 60 + float(s)
-    try:
-        return float(time_val)
-    except:
-        return 0.0
+    if video_source.lower() == 'pexels':
+        insertion_point = final_prompt.find("**Formato de Saída Obrigatório**")
+        if insertion_point != -1:
+            instruction = "**Instrução Crítica de Idioma: Todas as queries de busca (`keywords` e `background_keywords`) DEVEM ser geradas em INGLÊS.**\n\n"
+            final_prompt = final_prompt[:insertion_point] + instruction + final_prompt[insertion_point:]
 
-
-def normalize_segments(segments):
-    normalized = []
-    for (start, end), kws in segments:
-        dur = end - start
-        if dur > max_segment:
-            num = math.ceil(dur / max_segment)
-            step = dur / num
-            for i in range(num):
-                s = start + i * step
-                e = min(end, start + (i + 1) * step)
-                normalized.append(((round(s, 2), round(e, 2)), kws))
-        else:
-            normalized.append(((start, end), kws))
-    return normalized
-
-
-def getVideoSearchQueriesTimed(script, captions_timed):
-    end_time = captions_timed[-1][0][1]
-    # 1) chama uma única vez
-    content = call_OpenAI(script, captions_timed)
-    try:
-        raw = json.loads(content)
-    except json.JSONDecodeError:
-        cleaned = content.replace("```json", "").replace("```", "")
-        raw = json.loads(fix_json(cleaned))
-
-    # 2) converte dicionários em [[start,end], keywords]
-    out = []
-    for item in raw:
-        s = to_seconds(item.get('start', 0))
-        e = to_seconds(item.get('end',   0))
-        kws = item.get('keywords', [])
-        out.append([[s, e], kws])
-
-    # 3) normaliza segmentos maiores/menores que o esperado
-    out = normalize_segments(out)
-    print(f"Gerados {len(out)} segmentos para {end_time}s (meta: {est_segments})")
-    return out
-
-
-def call_OpenAI(script, captions_timed):
-    user_content = f"Script: {script}\nTimed Captions: {captions_timed}"
+    user_content = f"Roteiro: {script}\n\nLegendas Temporizadas: {captions_timed}"
+    
     response = client.chat.completions.create(
         model=model,
         temperature=0.7,
         messages=[
-            {"role": "system", "content": prompt},
+            {"role": "system", "content": final_prompt},
             {"role": "user", "content": user_content}
-        ]
+        ],
+        response_format={"type": "json_object"}
     )
-    text = response.choices[0].message.content.strip()
-    text = re.sub(r'\s+', ' ', text)
-    log_response(LOG_TYPE_GPT, script, text)
-    return text
 
+    content = response.choices[0].message.content.strip()
+    log_response(LOG_TYPE_GPT, script, content)
 
-def merge_empty_intervals(segments):
-    merged = []
-    i = 0
-    while i < len(segments):
-        interval, url = segments[i]
-        if url is None:
-            j = i + 1
-            while j < len(segments) and segments[j][1] is None:
-                j += 1
-            if i > 0:
-                prev_interval, prev_url = merged[-1]
-                if prev_url is not None and prev_interval[1] == interval[0]:
-                    merged[-1] = [[prev_interval[0], segments[j-1][0][1]], prev_url]
-                else:
-                    merged.append([interval, prev_url])
-            else:
-                merged.append([interval, None])
-            i = j
+    try:
+        # --- LÓGICA DE EXTRAÇÃO DO JSON CORRIGIDA E MAIS ROBUSTA ---
+        data = json.loads(content)
+        visual_plan_list = []
+
+        # Caso 1: A resposta da IA é a própria lista de cenas.
+        if isinstance(data, list):
+            visual_plan_list = data
+        # Caso 2: A resposta é um dicionário que contém a lista (ex: {"scenes": [...]})
+        elif isinstance(data, dict):
+            for key in data:
+                if isinstance(data[key], list):
+                    visual_plan_list = data[key]
+                    break # Encontramos a lista, podemos parar
+        
+        if not visual_plan_list:
+            print("⚠️ O plano visual retornado pela IA está vazio ou em formato inesperado.")
+
+        log_response(LOG_TYPE_STORYBOARD, script, visual_plan_list)
+        return visual_plan_list
+    
+    except (json.JSONDecodeError, AttributeError):
+        print("⚠️ Falha ao decodificar JSON da IA, tentando extração manual.")
+        match = re.search(r'\[.*\]', content, re.DOTALL)
+        if match:
+            json_str = match.group(0)
+            parsed_json = json.loads(fix_json(json_str))
+            log_response(LOG_TYPE_STORYBOARD, script, parsed_json)
+            return parsed_json
         else:
-            merged.append([interval, url])
-            i += 1
-    return merged
+            raise ValueError("Não foi possível extrair um array JSON válido da resposta da IA.")
+        
+def create_slideshow_plan(slideshow_script: list, duration_per_slide: int = 7) -> list:
+    """
+    Converte um roteiro de slideshow em um plano visual.
+    """
+    visual_plan = []
+    current_time = 0
+    for i, slide in enumerate(slideshow_script):
+        start_time = current_time
+        end_time = start_time + duration_per_slide
+        
+        slide_text_content = f"{slide.get('title', '')}\n\n{slide.get('text', '')}"
+        search_keywords = slide.get('search_keywords', [slide.get('title', '')])
+
+        scene = {
+            "start": start_time,
+            "end": end_time,
+            "type": "slide",
+            "data": {
+                "slide_text": slide_text_content,
+                "background_keywords": search_keywords
+            }
+        }
+        visual_plan.append(scene)
+        current_time = end_time
+        
+    return visual_plan

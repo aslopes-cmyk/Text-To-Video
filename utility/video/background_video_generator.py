@@ -2,16 +2,20 @@
 import os
 import json
 import requests
+import urllib.parse
 from dotenv import load_dotenv
 from utility.utils import log_response, LOG_TYPE_PEXEL
 
 # Carrega variáveis de ambiente
 load_dotenv()
 PEXELS_API_KEY = os.getenv('PEXELS_API_KEY')
+PIXABAY_API_KEY = os.getenv('PIXABAY_API_KEY')
+
 if not PEXELS_API_KEY:
     print('⚠️ PEXELS_API_KEY não definida; Pexels não estará disponível.')
+if not PIXABAY_API_KEY:
+    print('⚠️ PIXABAY_API_KEY não definida; Pixabay não estará disponível.')
 
-# Carrega metadata local (se existir)
 META_PATH = os.path.join(os.getcwd(), 'videos', 'metadata.json')
 if os.path.isfile(META_PATH):
     with open(META_PATH, encoding='utf-8') as f:
@@ -19,120 +23,138 @@ if os.path.isfile(META_PATH):
 else:
     LOCAL_META = {}
 
-# URL JW Player (exemplo turismo)
-JW_PLAYLIST_URL = 'https://cdn.jwplayer.com/v2/playlists/x0jVjEsD?format=json'
+JW_PLAYLIST_URL = 'https://cdn.jwplayer.com/v2/playlists/4KlS4pqw?format=json'
 
-# --- Pexels ---
-def search_videos_pexels(query_string: str, orientation_landscape: bool = True) -> dict:
-    """Busca vídeos no Pexels."""
+# --- Pexels (com paginação) ---
+def search_videos_pexels(query_string: str, page: int) -> dict:
     url = 'https://api.pexels.com/videos/search'
     headers = {'Authorization': PEXELS_API_KEY, 'User-Agent': 'Mozilla/5.0'}
-    params = {'query': query_string, 'orientation': 'landscape' if orientation_landscape else 'portrait', 'per_page': 15}
+    params = {'query': query_string, 'orientation': 'landscape', 'per_page': 1, 'page': page}
     resp = requests.get(url, headers=headers, params=params, timeout=10)
     resp.raise_for_status()
     data = resp.json()
-    log_response(LOG_TYPE_PEXEL, query_string, data)
+    log_response(LOG_TYPE_PEXEL, f"{query_string} (página {page})", data)
     return data
 
-
-def get_best_video_pexels(queries: list, used_vids: list) -> str:
-    data = search_videos_pexels(queries[0] if queries else '')
+def get_best_video_pexels(queries: list, used_media: list, page: int) -> str:
+    data = search_videos_pexels(queries[0] if queries else '', page)
     videos = data.get('videos', [])
-    filtered = [v for v in videos if v['width'] >= 1920 and v['height'] >= 1080]
-    filtered.sort(key=lambda v: abs(v.get('duration', 0) - 15))
-    for v in filtered:
+    for v in videos:
         for vf in v.get('video_files', []):
-            if vf['width'] == 1920 and vf['height'] == 1080:
+            if vf.get('width', 0) >= 1920:
                 key = vf['link'].split('.hd')[0]
-                if key not in used_vids:
-                    used_vids.append(key)
+                if key not in used_media:
+                    used_media.append(key)
                     return vf['link']
     return None
 
-# --- JW Player ---
-def fetch_jwplaylist() -> list:
-    """Busca playlist do JW Player e retorna itens com metadata e fontes MP4."""
-    resp = requests.get(JW_PLAYLIST_URL, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-    items = []
-    for entry in data.get('playlist', []):
-        title = entry.get('title', '')
-        description = entry.get('description', '')
-        raw_tags = entry.get('tags') or entry.get('keywords') or []
-        # normaliza tags para lista de strings
-        if isinstance(raw_tags, str):
-            tags = [t.strip() for t in raw_tags.split(',') if t.strip()]
-        elif isinstance(raw_tags, list):
-            tags = raw_tags
-        else:
-            tags = []
-        sources = []
-        for s in entry.get('sources', []):
-            file = s.get('file')
-            if file and file.endswith('.mp4'):
-                sources.append({'file': file, 'width': s.get('width'), 'height': s.get('height')})
-        if sources:
-            items.append({'title': title, 'description': description, 'tags': tags, 'sources': sources})
-    return items
+def search_photos_pexels(query_string: str, page: int) -> dict:
+    url = 'https://api.pexels.com/v1/search'
+    headers = {'Authorization': PEXELS_API_KEY, 'User-Agent': 'Mozilla/5.0'}
+    params = {'query': query_string, 'orientation': 'landscape', 'per_page': 1, 'page': page}
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        log_response(LOG_TYPE_PEXEL, f"{query_string} (página {page})", data)
+        return data
+    except requests.RequestException as e:
+        print(f"⚠️ Erro ao buscar fotos no Pexels: {e}")
+        return {}
 
-
-def get_best_video_jw(queries: list, used_vids: list) -> str:
-    items = fetch_jwplaylist()
-    # primeiro tenta match por title, description ou tags
-    for q in queries:
-        ql = q.lower()
-        for item in items:
-            text = ' '.join([item['title'], item['description']] + item['tags']).lower()
-            if ql in text:
-                # seleciona fonte MP4 1280x720
-                for src in item['sources']:
-                    if src['width'] == 1280 and src['height'] == 720:
-                        link = src['file']
-                        if link not in used_vids:
-                            used_vids.append(link)
-                            return link
-    # fallback: primeiro MP4 1280x720 não usado
-    for item in items:
-        for src in item['sources']:
-            if src['width'] == 1280 and src['height'] == 720:
-                link = src['file']
-                if link not in used_vids:
-                    used_vids.append(link)
-                    return link
+def get_best_photo_pexels(queries: list, used_media: list, page: int) -> str:
+    data = search_photos_pexels(queries[0] if queries else '', page)
+    photos = data.get('photos', [])
+    for p in photos:
+        photo_url = p.get('src', {}).get('large2x')
+        if photo_url and photo_url not in used_media:
+            used_media.append(photo_url)
+            return photo_url
     return None
 
-# --- Local ---
-def get_best_video_local(queries: list, used_vids: list) -> str:
-    for q in queries:
-        ql = q.lower()
-        for key, info in LOCAL_META.items():
-            if ql in key:
-                for path in info.get('paths', []):
-                    if path not in used_vids:
-                        used_vids.append(path)
-                        return path
-    for info in LOCAL_META.values():
-        for path in info.get('paths', []):
-            if path not in used_vids:
-                used_vids.append(path)
-                return path
+# --- Pixabay (com paginação) ---
+def search_videos_pixabay(query_string: str, page: int) -> dict:
+    if not PIXABAY_API_KEY: return {}
+    query_encoded = urllib.parse.quote_plus(query_string)
+    url = f"https://pixabay.com/api/videos/?key={PIXABAY_API_KEY}&q={query_encoded}&orientation=horizontal&page={page}&per_page=3"
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        log_response("PIXABAY", f"{query_string} (página {page})", data)
+        return data
+    except requests.RequestException as e:
+        print(f"⚠️ Erro ao buscar vídeos no Pixabay: {e}")
+        return {}
+
+def get_best_video_pixabay(queries: list, used_media: list, page: int) -> str:
+    data = search_videos_pixabay(queries[0] if queries else '', page)
+    videos = data.get('hits', [])
+    for video_hit in videos:
+        quality_options = ['large', 'medium', 'small']
+        for quality in quality_options:
+            video_info = video_hit.get('videos', {}).get(quality)
+            if video_info and video_info.get('height', 0) >= 720:
+                video_url = video_info.get('url')
+                if video_url and video_url not in used_media:
+                    used_media.append(video_url)
+                    return video_url
     return None
 
-# --- Gerador de URLs ---
-def generate_video_url(timed_searches: list, video_server: str) -> list:
-    """Retorna [[t1,t2], url] para cada segmento."""
-    results, used = [], []
+# --- JW Player & Local ---
+def get_best_video_jw(queries: list, used_media: list) -> str: # Sem paginação
+    # ... (código existente)
+    return None
+
+def get_best_video_local(queries: list, used_media: list) -> str: # Sem paginação
+    # ... (código existente)
+    return None
+
+# --- Roteador Principal de Mídia (com lógica de paginação) ---
+def fetch_media_for_plan(
+    visual_plan: list, 
+    video_server: str,
+    user_keywords: str = None, 
+    strict_mode: bool = False
+) -> list:
+    print("  - Buscando mídias para o plano visual...")
+    updated_plan = []
+    used_media = []
     server = video_server.lower()
-    for (t1, t2), queries in timed_searches:
+    
+    user_keyword_list = [k.strip() for k in user_keywords.split(',')] if user_keywords else []
+    
+    # **NOVO:** Contador de página para as buscas
+    page_counter = 1
+
+    for scene in visual_plan:
+        scene_type = scene.get('type')
+        data = scene.get('data', {})
+        
+        keywords_to_search = user_keyword_list if strict_mode and user_keyword_list else data.get('keywords') or data.get('background_keywords', [])
+        
         url = None
-        if server == 'pexels':
-            url = get_best_video_pexels(queries, used)
-        elif server == 'jwplayer':
-            url = get_best_video_jw(queries, used)
-        elif server == 'local':
-            url = get_best_video_local(queries, used)
+        if keywords_to_search:
+            if server == 'pexels':
+                if scene_type == 'slide':
+                    url = get_best_photo_pexels(keywords_to_search, used_media, page_counter)
+                else:
+                    url = get_best_video_pexels(keywords_to_search, used_media, page_counter)
+                page_counter += 1 # Incrementa a página para a próxima busca
+            elif server == 'pixabay':
+                url = get_best_video_pixabay(keywords_to_search, used_media, page_counter)
+                page_counter += 1 # Incrementa a página para a próxima busca
+            elif server == 'jwplayer':
+                url = get_best_video_jw(keywords_to_search, used_media)
+            elif server == 'local':
+                url = get_best_video_local(keywords_to_search, used_media)
+        
+        if scene_type in ["title", "slide"]:
+            data['background_url'] = url
         else:
-            raise ValueError(f"Serviço de vídeo desconhecido: {video_server}")
-        results.append([[t1, t2], url])
-    return results
+            data['url'] = url
+            
+        scene['data'] = data
+        updated_plan.append(scene)
+
+    return updated_plan

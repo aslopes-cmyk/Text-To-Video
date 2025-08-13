@@ -65,8 +65,9 @@ def get_timestamp_mapping(whisper_analysis: dict):
 
 
 def clean_word(word: str) -> str:
-    # preserva caracteres de palavras em PT (acentos) e hífens
-    return re.sub(r"[^\wÀ-ÿ\s\-_'\"]", "", word)
+    # Regex ajustada para MANTER a pontuação básica (.,!?) no final das palavras.
+    # Esta regex remove caracteres indesejados do início/meio da palavra, mas preserva o essencial.
+    return re.sub(r"[^\wÀ-ÿ\s\-_'\".,!?]", "", word)
 
 
 
